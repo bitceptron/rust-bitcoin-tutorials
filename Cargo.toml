@@ -7,11 +7,11 @@ edition = "2021"
 
 [[bin]]
 name = "p2wpkh_tx"
-path = "src/p2wpkh_tx/main.rs"
+path = "p2wpkh_tx/main.rs"
 
 [[bin]]
 name = "taproot_tx"
-path ="src/taproot_tx/main.rs"
+path ="taproot_tx/main.rs"
 
 [dependencies]
 bip39 = { version = "2.0.0", features = ["zeroize", "rand", "serde"] }
