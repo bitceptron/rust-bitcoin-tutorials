@@ -1,0 +1,22 @@
+[package]
+name = "rust_bitcoin_tutorials"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "p2wpkh_tx"
+path = "src/p2wpkh_tx/main.rs"
+
+[[bin]]
+name = "taproot_tx"
+path ="src/taproot_tx/main.rs"
+
+[dependencies]
+bip39 = { version = "2.0.0", features = ["zeroize", "rand", "serde"] }
+bitcoin = { version = "0.31.1", features = ["serde", "rand"] }
+bitcoincore-rpc = "0.18.0"
+miniscript = { version = "11.0.0", features = ["serde", "compiler"] }
+rand = "0.8.5"
+regex = "1.10.4"
