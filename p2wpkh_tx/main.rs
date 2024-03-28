@@ -77,7 +77,7 @@ fn main() {
         .unwrap();
     let rusty_bip84_xpub = Xpub::from_priv(&secp, &rusty_bip84_xpriv);
     let rusty_bip84_secretkey = rusty_bip84_xpriv.private_key;
-    let rusty_bip84_pubkey = rusty_bip84_secretkey.public_key(&secp);
+    let _rusty_bip84_pubkey = rusty_bip84_secretkey.public_key(&secp);
     println!(
         "\nNow rusty creates a master xpriv:\nxpriv = {} at {}",
         rusty_master_xpriv, rusty_bip84_derivation_path
