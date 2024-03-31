@@ -14,9 +14,7 @@ use bitcoincore_rpc::{
     RpcApi,
 };
 use miniscript::{Descriptor, ToPublicKey};
-use musig2::{
-    secp::Scalar, secp256k1::SecretKey, AggNonce, KeyAggContext, PartialSignature, SecNonce,
-};
+use musig2::{AggNonce, KeyAggContext, PartialSignature, SecNonce};
 use rand::RngCore;
 use rand_chacha::ChaCha20Rng;
 use rust_bitcoin_tutorials::{
@@ -140,10 +138,7 @@ fn main() -> Result<(), TaprootUtilsError> {
     let taptweak_scalar =
         bitcoin::secp256k1::Scalar::from_be_bytes(taproot_spend_info.tap_tweak().to_byte_array())
             .unwrap();
-    let key_agg_ctx = key_agg_ctx
-        .with_taproot_tweak(&taproot_spend_info.merkle_root().unwrap().to_byte_array())
-        .unwrap();
-    let aggregated_pubkey: bitcoin::secp256k1::PublicKey = key_agg_ctx.aggregated_pubkey();
+
     // let tweaked_aggregated_pubkey = untweaked_aggregated_pubkey
     //     .add_exp_tweak(&secp, &taptweak_scalar)
     //     .unwrap();
@@ -251,35 +246,33 @@ fn main() -> Result<(), TaprootUtilsError> {
     let txp1_sighash = txp1_sighasher
         .taproot_key_spend_signature_hash(0, &txp1_prevouts, txp1_sighash_type)
         .unwrap();
-    println!("{:#?}", txp1_sighash);
+    println!("{:#?}",txp1_sighash);
     let txp1_msg = Message::from_digest(txp1_sighash.to_byte_array());
     let txp1_msg_bytes = txp1_sighash.to_byte_array();
 
     // Since this keypath spend is a MuSig, we must sign the message via MuSig protocol.
 
-    // *******************************
-    // let party1_tweaked_secretkey =
-    //     tap_add_tweak_secretkey(keyset1.get_secretkey(), &taproot_spend_info.tap_tweak());
-    // let party1_tweaked_pubkey = party1_tweaked_secretkey.public_key(&secp);
+    let party1_tweaked_secretkey =
+        tap_add_tweak_secretkey(keyset1.get_secretkey(), &taproot_spend_info.tap_tweak());
+    let party1_tweaked_pubkey = party1_tweaked_secretkey.public_key(&secp);
 
-    // let party2_tweaked_secretkey =
-    //     tap_add_tweak_secretkey(keyset2.get_secretkey(), &taproot_spend_info.tap_tweak());
-    // let party2_tweaked_pubkey = party2_tweaked_secretkey.public_key(&secp);
+    let party2_tweaked_secretkey =
+        tap_add_tweak_secretkey(keyset2.get_secretkey(), &taproot_spend_info.tap_tweak());
+    let party2_tweaked_pubkey = party2_tweaked_secretkey.public_key(&secp);
 
-    // let party3_tweaked_secretkey =
-    //     tap_add_tweak_secretkey(keyset3.get_secretkey(), &taproot_spend_info.tap_tweak());
-    // let party3_tweaked_pubkey = party3_tweaked_secretkey.public_key(&secp);
+    let party3_tweaked_secretkey =
+        tap_add_tweak_secretkey(keyset3.get_secretkey(), &taproot_spend_info.tap_tweak());
+    let party3_tweaked_pubkey = party3_tweaked_secretkey.public_key(&secp);
 
-    // let tweaked_pubkeys = vec![
-    //     party1_tweaked_pubkey,
-    //     party2_tweaked_pubkey,
-    //     party3_tweaked_pubkey,
-    // ];
-    // let tweaked_key_agg_ctx = KeyAggContext::new(tweaked_pubkeys).unwrap();
+    let tweaked_pubkeys = vec![
+        party1_tweaked_pubkey,
+        party2_tweaked_pubkey,
+        party3_tweaked_pubkey,
+    ];
+    let tweaked_key_agg_ctx = KeyAggContext::new(tweaked_pubkeys).unwrap();
 
-    // let tweaked_aggregated_pubkey =
-    //     tweaked_key_agg_ctx.aggregated_pubkey::<musig2::secp256k1::PublicKey>();
-    // *******************************
+    let tweaked_aggregated_pubkey =
+        tweaked_key_agg_ctx.aggregated_pubkey::<musig2::secp256k1::PublicKey>();
 
     // Each party creates a public and private nonce:
     // Party 1
@@ -288,8 +281,8 @@ fn main() -> Result<(), TaprootUtilsError> {
     rng.fill_bytes(&mut party1_nonce_seed);
     let party1_secnonce = SecNonce::generate(
         party1_nonce_seed,
-        keyset1.get_secretkey().clone(),
-        aggregated_pubkey,
+        party1_tweaked_secretkey,
+        tweaked_aggregated_pubkey,
         txp1_msg_bytes,
         party1_nonce_seed,
     );
@@ -301,8 +294,8 @@ fn main() -> Result<(), TaprootUtilsError> {
     rng.fill_bytes(&mut party2_nonce_seed);
     let party2_secnonce = SecNonce::generate(
         party2_nonce_seed,
-        keyset2.get_secretkey().clone(),
-        aggregated_pubkey,
+        party2_tweaked_secretkey,
+        tweaked_aggregated_pubkey,
         txp1_msg_bytes,
         party2_nonce_seed,
     );
@@ -314,8 +307,8 @@ fn main() -> Result<(), TaprootUtilsError> {
     rng.fill_bytes(&mut party3_nonce_seed);
     let party3_secnonce = SecNonce::generate(
         party3_nonce_seed,
-        keyset3.get_secretkey().clone(),
-        aggregated_pubkey,
+        party3_tweaked_secretkey,
+        tweaked_aggregated_pubkey,
         txp1_msg_bytes,
         party3_nonce_seed,
     );
@@ -330,23 +323,21 @@ fn main() -> Result<(), TaprootUtilsError> {
 
     let aggregated_pubnonce: AggNonce = pubnonces.iter().sum();
 
-    //let key_agg_ctx = key_agg_ctx.with_taproot_tweak(&taptweak_scalar.to_be_bytes()).unwrap();
-
     // Now the signing:
     // Party 1
     let party1_partial_signature: PartialSignature = musig2::sign_partial(
-        &key_agg_ctx,
-        keyset1.get_secretkey().clone(),
+        &tweaked_key_agg_ctx,
+        party1_tweaked_secretkey,
         party1_secnonce,
         &aggregated_pubnonce,
         txp1_msg_bytes,
     )
     .unwrap();
     let party1_partial_sig_verification = musig2::verify_partial(
-        &key_agg_ctx,
+        &tweaked_key_agg_ctx,
         party1_partial_signature,
         &aggregated_pubnonce,
-        keyset1.get_publickey().x_only_public_key(),
+        party1_tweaked_pubkey,
         &party1_pubnonce,
         txp1_msg_bytes,
     );
@@ -357,18 +348,18 @@ fn main() -> Result<(), TaprootUtilsError> {
 
     // Party 2
     let party2_partial_signature: PartialSignature = musig2::sign_partial(
-        &key_agg_ctx,
-        keyset2.get_secretkey().clone(),
+        &tweaked_key_agg_ctx,
+        party2_tweaked_secretkey,
         party2_secnonce,
         &aggregated_pubnonce,
         txp1_msg_bytes,
     )
     .unwrap();
     let party2_partial_sig_verification = musig2::verify_partial(
-        &key_agg_ctx,
+        &tweaked_key_agg_ctx,
         party2_partial_signature,
         &aggregated_pubnonce,
-        keyset2.get_publickey().x_only_public_key(),
+        party2_tweaked_pubkey,
         &party2_pubnonce,
         txp1_msg_bytes,
     );
@@ -379,18 +370,18 @@ fn main() -> Result<(), TaprootUtilsError> {
 
     // Party 3
     let party3_partial_signature: PartialSignature = musig2::sign_partial(
-        &key_agg_ctx,
-        keyset3.get_secretkey().clone(),
+        &tweaked_key_agg_ctx,
+        party3_tweaked_secretkey,
         party3_secnonce,
         &aggregated_pubnonce,
         txp1_msg_bytes,
     )
     .unwrap();
     let party3_partial_sig_verification = musig2::verify_partial(
-        &key_agg_ctx,
+        &tweaked_key_agg_ctx,
         party3_partial_signature,
         &aggregated_pubnonce,
-        keyset3.get_publickey().x_only_public_key(),
+        party3_tweaked_pubkey,
         &party3_pubnonce,
         txp1_msg_bytes,
     );
@@ -405,19 +396,20 @@ fn main() -> Result<(), TaprootUtilsError> {
         party2_partial_signature,
         party3_partial_signature,
     ];
-    let mut final_signature: [u8; 64] = musig2::aggregate_partial_signatures(
-        &key_agg_ctx,
+    let final_signature: [u8; 64] = musig2::aggregate_partial_signatures(
+        &tweaked_key_agg_ctx,
         &aggregated_pubnonce,
         partial_signatures,
         txp1_msg_bytes,
     )
     .unwrap();
 
-    let sig_verify = musig2::verify_single(aggregated_pubkey, final_signature, txp1_msg_bytes);
+    let sig_verify =
+        musig2::verify_single(tweaked_aggregated_pubkey, final_signature, txp1_msg_bytes);
     println!("Signature verification: {:?}", sig_verify);
     println!("{:?}", taproot_spend_info.output_key().to_inner());
     println!("{:?}", untweaked_aggregated_pubkey.to_x_only_pubkey());
-    //println!("{:?}", tweaked_aggregated_pubkey.to_x_only_pubkey());
+    println!("{:?}", untweaked_aggregated_pubkey.add_exp_tweak(&secp, &taptweak_scalar).unwrap().to_x_only_pubkey());
 
     // Now let's update our sighash with this final_signature.
 
@@ -439,22 +431,20 @@ fn main() -> Result<(), TaprootUtilsError> {
     println!("txp1 acceptance result:\n{:#?}", txp1_acceptance);
     // // println!("TXP1:\n{:#?}", txp1);
 
-    // Now we send the txp1
+    // // Now we send the txp1
 
-    let txp1_txid = rusty_client.send_raw_transaction(&*txp1).unwrap();
+    // mining_client
+    //     .generate_to_address(100, &mining_address)
+    //     .unwrap();
 
-    mining_client
-        .generate_to_address(100, &mining_address)
-        .unwrap();
-
-    let rusty_scan_request = ScanTxOutRequest::Single(taproot_descriptor.to_string());
-    let rusty_scan_result = rusty_client
-        .scan_tx_out_set_blocking(&[rusty_scan_request])
-        .unwrap();
-    println!(
-        "\nRusty now has {} bitcoins.",
-        rusty_scan_result.total_amount
-    );
+    // let rusty_scan_request = ScanTxOutRequest::Single(rusty_taproot_descriptor.to_string());
+    // let rusty_scan_result = rusty_client
+    //     .scan_tx_out_set_blocking(&[rusty_scan_request])
+    //     .unwrap();
+    // println!(
+    //     "\nRusty now has {} bitcoins.",
+    //     rusty_scan_result.total_amount
+    // );
 
     unwind_regtest(vec![rusty_client, mining_client], TEMP_PATH);
     Ok(())
