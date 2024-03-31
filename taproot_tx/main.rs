@@ -1,38 +1,28 @@
 use bitcoin::{
     absolute::LockTime,
     hashes::Hash,
-    key::{Keypair, Secp256k1, TapTweak, UntweakedPublicKey},
-    secp256k1::Message,
+    key::Secp256k1,
     sighash::{Prevouts, SighashCache},
-    taproot::{Signature, TapTree, TaprootBuilder},
+    taproot::{Signature, TaprootBuilder},
     transaction::Version,
-    Address, Amount, Network, OutPoint, PublicKey, ScriptBuf, Sequence, TapSighashType,
-    Transaction, TxIn, TxOut, Witness, XOnlyPublicKey,
+    Address, Amount, Network, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn,
+    TxOut, Witness,
 };
 use bitcoincore_rpc::{
     json::{AddressType, ScanTxOutRequest},
     RpcApi,
 };
-use miniscript::{Descriptor, ToPublicKey};
-use musig2::{
-    secp::Scalar, secp256k1::SecretKey, AggNonce, KeyAggContext, PartialSignature, SecNonce,
-};
+use miniscript::Descriptor;
+use musig2::{AggNonce, KeyAggContext, PartialSignature, SecNonce};
 use rand::RngCore;
-use rand_chacha::ChaCha20Rng;
 use rust_bitcoin_tutorials::{
     regtest_utils::{
+        common::{get_balance, send_and_mine},
         spawn_regtest::{spawn_regtest, RegtestConf},
         unwind_regtest::unwind_regtest,
     },
-    taproot_utils::{
-        policy_compiler::TapPolicyData, tweaks::tap_add_tweak_secretkey, TapKeySet,
-        TaprootUtilsError,
-    },
+    taproot_utils::{policy_compiler::TapPolicyData, TapKeySet, TaprootUtilsError},
 };
-// use schnorr_fun::{
-//     fun::{marker::{Normal, EvenY}, Point},
-//     musig::{self},
-// };
 use sha2::Digest;
 
 // -->> SET THESE FIRST! <<--
@@ -137,18 +127,11 @@ fn main() -> Result<(), TaprootUtilsError> {
         .clone()
         .finalize(&secp, untweaked_aggregated_pubkey.x_only_public_key().0)
         .unwrap();
-    let taptweak_scalar =
-        bitcoin::secp256k1::Scalar::from_be_bytes(taproot_spend_info.tap_tweak().to_byte_array())
-            .unwrap();
+
     let key_agg_ctx = key_agg_ctx
         .with_taproot_tweak(&taproot_spend_info.merkle_root().unwrap().to_byte_array())
         .unwrap();
     let aggregated_pubkey: bitcoin::secp256k1::PublicKey = key_agg_ctx.aggregated_pubkey();
-    // let tweaked_aggregated_pubkey = untweaked_aggregated_pubkey
-    //     .add_exp_tweak(&secp, &taptweak_scalar)
-    //     .unwrap();
-    // println!("tweaked agg pubkey:\n{:#?}",tweaked_aggregated_pubkey.x_only_public_key());
-    // println!("SPEND INFO:\n{:#?}",taproot_spend_info);
 
     // Now we wanna create a descriptor.
     let mut miniscript_taptree = miniscript::descriptor::TapTree::combine(
@@ -163,7 +146,7 @@ fn main() -> Result<(), TaprootUtilsError> {
         Descriptor::new_tr(taproot_spend_info.internal_key(), Some(miniscript_taptree))?;
 
     // Now let's create a taproot address, one way:
-    let rusty_taproot_address = taproot_descriptor.address(NETWORK)?;
+    let _rusty_taproot_address = taproot_descriptor.address(NETWORK)?;
 
     // Another way:
     let rusty_taproot_address = Address::p2tr(
@@ -174,7 +157,7 @@ fn main() -> Result<(), TaprootUtilsError> {
     );
 
     // Now let's send some bitcoins from the miner to Rusty's taproot address and mine the transaction
-    let miner_to_rusty_txid = mining_client
+    let _miner_to_rusty_txid = mining_client
         .send_to_address(
             &rusty_taproot_address,
             Amount::from_int_btc(68),
@@ -189,13 +172,9 @@ fn main() -> Result<(), TaprootUtilsError> {
 
     let _ = mining_client.generate_to_address(20, &mining_address);
 
-    let rusty_scan_request = ScanTxOutRequest::Single(taproot_descriptor.to_string());
-    let rusty_scan_result = rusty_client
-        .scan_tx_out_set_blocking(&[rusty_scan_request])
-        .unwrap();
     println!(
         "\nRusty now has {} bitcoins.\n",
-        rusty_scan_result.total_amount
+        get_balance(&taproot_descriptor, &rusty_client)
     );
 
     // Now we want to send back 20 bitcoins back to the miner, via 4 transactions, each transferring 5 bitcoins
@@ -204,6 +183,10 @@ fn main() -> Result<(), TaprootUtilsError> {
     // tx policy 1 (txp1) - Keypath spend, all 3 keys must sign through a MuSig2.
     // First, let's create the unsigned transaction.
 
+    let rusty_scan_request = ScanTxOutRequest::Single(taproot_descriptor.to_string());
+    let rusty_scan_result = rusty_client
+        .scan_tx_out_set_blocking(&[rusty_scan_request])
+        .unwrap();
     let txp1_input_utxo = rusty_scan_result.unspents[0].clone();
     let txp1_vesrion = Version::TWO;
     let txp1_locktime =
@@ -251,35 +234,7 @@ fn main() -> Result<(), TaprootUtilsError> {
     let txp1_sighash = txp1_sighasher
         .taproot_key_spend_signature_hash(0, &txp1_prevouts, txp1_sighash_type)
         .unwrap();
-    println!("{:#?}", txp1_sighash);
-    let txp1_msg = Message::from_digest(txp1_sighash.to_byte_array());
     let txp1_msg_bytes = txp1_sighash.to_byte_array();
-
-    // Since this keypath spend is a MuSig, we must sign the message via MuSig protocol.
-
-    // *******************************
-    // let party1_tweaked_secretkey =
-    //     tap_add_tweak_secretkey(keyset1.get_secretkey(), &taproot_spend_info.tap_tweak());
-    // let party1_tweaked_pubkey = party1_tweaked_secretkey.public_key(&secp);
-
-    // let party2_tweaked_secretkey =
-    //     tap_add_tweak_secretkey(keyset2.get_secretkey(), &taproot_spend_info.tap_tweak());
-    // let party2_tweaked_pubkey = party2_tweaked_secretkey.public_key(&secp);
-
-    // let party3_tweaked_secretkey =
-    //     tap_add_tweak_secretkey(keyset3.get_secretkey(), &taproot_spend_info.tap_tweak());
-    // let party3_tweaked_pubkey = party3_tweaked_secretkey.public_key(&secp);
-
-    // let tweaked_pubkeys = vec![
-    //     party1_tweaked_pubkey,
-    //     party2_tweaked_pubkey,
-    //     party3_tweaked_pubkey,
-    // ];
-    // let tweaked_key_agg_ctx = KeyAggContext::new(tweaked_pubkeys).unwrap();
-
-    // let tweaked_aggregated_pubkey =
-    //     tweaked_key_agg_ctx.aggregated_pubkey::<musig2::secp256k1::PublicKey>();
-    // *******************************
 
     // Each party creates a public and private nonce:
     // Party 1
@@ -330,8 +285,6 @@ fn main() -> Result<(), TaprootUtilsError> {
 
     let aggregated_pubnonce: AggNonce = pubnonces.iter().sum();
 
-    //let key_agg_ctx = key_agg_ctx.with_taproot_tweak(&taptweak_scalar.to_be_bytes()).unwrap();
-
     // Now the signing:
     // Party 1
     let party1_partial_signature: PartialSignature = musig2::sign_partial(
@@ -342,18 +295,15 @@ fn main() -> Result<(), TaprootUtilsError> {
         txp1_msg_bytes,
     )
     .unwrap();
-    let party1_partial_sig_verification = musig2::verify_partial(
+    let _party1_partial_sig_verification = musig2::verify_partial(
         &key_agg_ctx,
         party1_partial_signature,
         &aggregated_pubnonce,
         keyset1.get_publickey().x_only_public_key(),
         &party1_pubnonce,
         txp1_msg_bytes,
-    );
-    println!(
-        "Party 1 partial sig verification: {:?}",
-        party1_partial_sig_verification
-    );
+    )
+    .unwrap();
 
     // Party 2
     let party2_partial_signature: PartialSignature = musig2::sign_partial(
@@ -364,18 +314,15 @@ fn main() -> Result<(), TaprootUtilsError> {
         txp1_msg_bytes,
     )
     .unwrap();
-    let party2_partial_sig_verification = musig2::verify_partial(
+    let _party2_partial_sig_verification = musig2::verify_partial(
         &key_agg_ctx,
         party2_partial_signature,
         &aggregated_pubnonce,
         keyset2.get_publickey().x_only_public_key(),
         &party2_pubnonce,
         txp1_msg_bytes,
-    );
-    println!(
-        "Party 2 partial sig verification: {:?}",
-        party2_partial_sig_verification
-    );
+    )
+    .unwrap();
 
     // Party 3
     let party3_partial_signature: PartialSignature = musig2::sign_partial(
@@ -386,18 +333,15 @@ fn main() -> Result<(), TaprootUtilsError> {
         txp1_msg_bytes,
     )
     .unwrap();
-    let party3_partial_sig_verification = musig2::verify_partial(
+    let _party3_partial_sig_verification = musig2::verify_partial(
         &key_agg_ctx,
         party3_partial_signature,
         &aggregated_pubnonce,
         keyset3.get_publickey().x_only_public_key(),
         &party3_pubnonce,
         txp1_msg_bytes,
-    );
-    println!(
-        "Party 3 partial sig verification: {:?}",
-        party3_partial_sig_verification
-    );
+    )
+    .unwrap();
 
     // Now let's aggregate partial signatures.
     let partial_signatures = vec![
@@ -405,7 +349,7 @@ fn main() -> Result<(), TaprootUtilsError> {
         party2_partial_signature,
         party3_partial_signature,
     ];
-    let mut final_signature: [u8; 64] = musig2::aggregate_partial_signatures(
+    let final_signature: [u8; 64] = musig2::aggregate_partial_signatures(
         &key_agg_ctx,
         &aggregated_pubnonce,
         partial_signatures,
@@ -413,11 +357,8 @@ fn main() -> Result<(), TaprootUtilsError> {
     )
     .unwrap();
 
-    let sig_verify = musig2::verify_single(aggregated_pubkey, final_signature, txp1_msg_bytes);
-    println!("Signature verification: {:?}", sig_verify);
-    println!("{:?}", taproot_spend_info.output_key().to_inner());
-    println!("{:?}", untweaked_aggregated_pubkey.to_x_only_pubkey());
-    //println!("{:?}", tweaked_aggregated_pubkey.to_x_only_pubkey());
+    let _sig_verify =
+        musig2::verify_single(aggregated_pubkey, final_signature, txp1_msg_bytes).unwrap();
 
     // Now let's update our sighash with this final_signature.
 
@@ -435,25 +376,13 @@ fn main() -> Result<(), TaprootUtilsError> {
     *txp1_sighasher.witness_mut(0).unwrap() = txp1_witness;
 
     let txp1 = txp1_sighasher.into_transaction();
-    let txp1_acceptance = rusty_client.test_mempool_accept(&[&*txp1]).unwrap();
-    println!("txp1 acceptance result:\n{:#?}", txp1_acceptance);
-    // // println!("TXP1:\n{:#?}", txp1);
+    let _txp1_acceptance = rusty_client.test_mempool_accept(&[&*txp1]).unwrap();
 
-    // Now we send the txp1
-
-    let txp1_txid = rusty_client.send_raw_transaction(&*txp1).unwrap();
-
-    mining_client
-        .generate_to_address(100, &mining_address)
-        .unwrap();
-
-    let rusty_scan_request = ScanTxOutRequest::Single(taproot_descriptor.to_string());
-    let rusty_scan_result = rusty_client
-        .scan_tx_out_set_blocking(&[rusty_scan_request])
-        .unwrap();
+    // Now we send the txp1 and mine it
+    let _txp1_txid = send_and_mine(txp1, &mining_client, mining_address, 50).unwrap();
     println!(
-        "\nRusty now has {} bitcoins.",
-        rusty_scan_result.total_amount
+        "\nAfter txp1, Rusty has {} bitcoins.\n",
+        get_balance(&taproot_descriptor, &rusty_client)
     );
 
     unwind_regtest(vec![rusty_client, mining_client], TEMP_PATH);

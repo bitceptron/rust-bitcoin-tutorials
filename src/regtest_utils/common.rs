@@ -1,9 +1,12 @@
 use std::collections::HashSet;
 
+use bitcoin::{Address, Amount, Transaction, Txid};
+use bitcoincore_rpc::{json::ScanTxOutRequest, Client, RpcApi};
+use miniscript::Descriptor;
+use musig2::secp256k1::ffi::XOnlyPublicKey;
 use regex::Regex;
 
 use super::{error::RegtestUtilsError, spawn_regtest::RegtestConf};
-
 
 pub fn check_ports_vec(ports: Vec<String>) -> Result<(), RegtestUtilsError> {
     let re = Regex::new(r"[0-9]+").unwrap();
@@ -31,4 +34,23 @@ pub fn check_confs_uniqueness(confs: &Vec<RegtestConf>) -> bool {
         return false;
     }
     true
+}
+
+pub fn send_and_mine(
+    tx: &Transaction,
+    mining_client: &Client,
+    mining_address: Address,
+    blocks_to_mine: u64,
+) -> Result<Txid, RegtestUtilsError> {
+    let txid = mining_client.send_raw_transaction(tx)?;
+    mining_client.generate_to_address(blocks_to_mine, &mining_address)?;
+    Ok(txid)
+}
+
+pub fn get_balance(descriptor: &Descriptor<bitcoin::XOnlyPublicKey>, checking_client: &Client) -> Amount {
+    let scan_request = ScanTxOutRequest::Single(descriptor.to_string());
+    let scan_result = checking_client
+        .scan_tx_out_set_blocking(&[scan_request])
+        .unwrap();
+    scan_result.total_amount
 }

@@ -406,7 +406,6 @@ dependencies = [
  "miniscript",
  "musig2",
  "rand",
- "rand_chacha",
  "regex",
  "sha2",
 ]
