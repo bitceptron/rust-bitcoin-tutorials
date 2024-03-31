@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use bitcoin::{Address, Amount, Transaction, Txid};
 use bitcoincore_rpc::{json::ScanTxOutRequest, Client, RpcApi};
 use miniscript::Descriptor;
-use musig2::secp256k1::ffi::XOnlyPublicKey;
 use regex::Regex;
 
 use super::{error::RegtestUtilsError, spawn_regtest::RegtestConf};
