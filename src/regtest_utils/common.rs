@@ -38,7 +38,7 @@ pub fn check_confs_uniqueness(confs: &Vec<RegtestConf>) -> bool {
 pub fn send_and_mine(
     tx: &Transaction,
     mining_client: &Client,
-    mining_address: Address,
+    mining_address: &Address,
     blocks_to_mine: u64,
 ) -> Result<Txid, RegtestUtilsError> {
     let txid = mining_client.send_raw_transaction(tx)?;

@@ -18,6 +18,7 @@ impl TapPolicyData {
     pub fn from_x_only_policy_str(policy_str: &str) -> Result<Self, TaprootUtilsError> {
         let policy_str = policy_str.to_string();
         let miniscript = x_only_policy_str_to_x_only_tap_miniscript(&policy_str)?;
+        
         let leaf = x_only_tap_miniscript_to_tapleaf(&miniscript);
         let script = x_only_tap_miniscript_to_scriptbuf(&miniscript);
         Ok(TapPolicyData {

@@ -3,17 +3,17 @@ use bitcoin::{
     hashes::Hash,
     key::Secp256k1,
     sighash::{Prevouts, SighashCache},
-    taproot::{Signature, TaprootBuilder},
+    taproot::{ControlBlock, LeafVersion, Signature, TaprootBuilder},
     transaction::Version,
-    Address, Amount, Network, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn,
-    TxOut, Witness,
+    Address, Amount, Network, OutPoint, ScriptBuf, Sequence, TapLeafHash, TapSighashType,
+    Transaction, TxIn, TxOut, Witness,
 };
 use bitcoincore_rpc::{
     json::{AddressType, ScanTxOutRequest},
     RpcApi,
 };
 use miniscript::Descriptor;
-use musig2::{AggNonce, KeyAggContext, PartialSignature, SecNonce};
+use musig2::{secp256k1::Message, AggNonce, KeyAggContext, PartialSignature, SecNonce};
 use rand::RngCore;
 use rust_bitcoin_tutorials::{
     regtest_utils::{
@@ -80,6 +80,8 @@ fn main() -> Result<(), TaprootUtilsError> {
     // Policy 2:
     let policy_2_str = format!(
         "thresh(2,pk({}),pk({}),pk({}))",
+        //"or(pk({}),pk({}))",
+        //"pk({})",
         keyset1.get_publickey_x_only(),
         keyset2.get_publickey_x_only(),
         keyset3.get_publickey_x_only()
@@ -91,7 +93,7 @@ fn main() -> Result<(), TaprootUtilsError> {
     let policy_3_data = TapPolicyData::from_x_only_policy_str(&policy_3_str)?;
 
     // Policy 4:
-    let policy_4_hashlock_preimage = "Hegel loves bitcoin and so on.";
+    let policy_4_hashlock_preimage = b"Hegel loves bitcoin and so on.";
     let mut hasher = sha2::Sha256::new();
     hasher.update(policy_4_hashlock_preimage);
     let policy_4_hashlock_digest = hex::encode(hasher.finalize());
@@ -379,11 +381,277 @@ fn main() -> Result<(), TaprootUtilsError> {
     let _txp1_acceptance = rusty_client.test_mempool_accept(&[&*txp1]).unwrap();
 
     // Now we send the txp1 and mine it
-    let _txp1_txid = send_and_mine(txp1, &mining_client, mining_address, 50).unwrap();
+    let _txp1_txid = send_and_mine(txp1, &mining_client, &mining_address, 50).unwrap();
     println!(
         "\nAfter txp1, Rusty has {} bitcoins.\n",
         get_balance(&taproot_descriptor, &rusty_client)
     );
+    // DONE!!!
+
+    // ----------------------------------------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------------------------------------
+
+    // Now let's spend policy 2.
+    let rusty_scan_request = ScanTxOutRequest::Single(taproot_descriptor.to_string());
+    let rusty_scan_result = rusty_client
+        .scan_tx_out_set_blocking(&[rusty_scan_request])
+        .unwrap();
+    let txp2_input_utxo = rusty_scan_result.unspents[0].clone();
+    let txp2_vesrion = Version::TWO;
+    let txp2_locktime =
+        LockTime::from_height(rusty_client.get_block_count().unwrap() as u32).unwrap();
+
+    let txp2_input_previous_output = OutPoint {
+        txid: txp2_input_utxo.txid,
+        vout: txp2_input_utxo.vout,
+    };
+
+    let txp2_input_sequence = Sequence::ZERO;
+
+    let txp2_input = TxIn {
+        previous_output: txp2_input_previous_output,
+        script_sig: ScriptBuf::default(),
+        sequence: txp2_input_sequence,
+        witness: Witness::default(),
+    };
+
+    let txp2_spend_output = TxOut {
+        value: Amount::from_int_btc(5),
+        script_pubkey: mining_address.script_pubkey(),
+    };
+
+    let txp2_change_output = TxOut {
+        value: Amount::from_btc(57.9990).unwrap(),
+        script_pubkey: rusty_taproot_address.script_pubkey(),
+    };
+
+    let mut txp2_unsigned = Transaction {
+        version: txp2_vesrion,
+        lock_time: txp2_locktime,
+        input: vec![txp2_input],
+        output: vec![txp2_spend_output.clone(), txp2_change_output],
+    };
+
+    let txp2_sighash_type = TapSighashType::Default;
+    let txp2_prevout = vec![TxOut {
+        value: txp2_input_utxo.amount,
+        script_pubkey: txp2_input_utxo.script_pub_key,
+    }];
+    let txp2_prevouts = Prevouts::All(&txp2_prevout);
+
+    let mut txp2_sighasher = SighashCache::new(&mut txp2_unsigned);
+
+    let policy2_leaf_hash = TapLeafHash::from_script(
+        policy_2_data.get_script(),
+        bitcoin::taproot::LeafVersion::TapScript,
+    );
+
+    let txp2_sighash = txp2_sighasher
+        .taproot_script_spend_signature_hash(
+            0,
+            &txp2_prevouts,
+            policy2_leaf_hash,
+            txp2_sighash_type,
+        )
+        .unwrap();
+
+    let txp2_msg = bitcoin::secp256k1::Message::from_digest(txp2_sighash.to_byte_array());
+    // let txp2_msg_bytes = txp2_sighash.to_byte_array();
+
+    let txp2_party1_signature = secp.sign_schnorr(&txp2_msg, keyset1.get_keypair());
+    let txp2_party1_signature = Signature {
+        sig: txp2_party1_signature,
+        hash_ty: txp2_sighash_type,
+    };
+
+    let txp2_party3_signature = secp.sign_schnorr(&txp2_msg, keyset3.get_keypair());
+    let txp2_party3_signature = Signature {
+        sig: txp2_party3_signature,
+        hash_ty: txp2_sighash_type,
+    };
+
+    secp.verify_schnorr(
+        &txp2_party1_signature.sig,
+        &txp2_msg,
+        keyset1.get_publickey_x_only(),
+    )
+    .unwrap();
+    secp.verify_schnorr(
+        &txp2_party3_signature.sig,
+        &txp2_msg,
+        keyset3.get_publickey_x_only(),
+    )
+    .unwrap();
+
+    // Creating a witness and populating it.
+    let mut txp2_witness = Witness::new();
+
+    // The control block
+    let txp2_merkle_branch = taproot_spend_info
+        .script_map()
+        .get(&(
+            policy_2_data.get_script().clone(),
+            bitcoin::taproot::LeafVersion::TapScript,
+        ))
+        .unwrap()
+        .clone()
+        .pop_first()
+        .unwrap();
+    let txp2_control_block = ControlBlock {
+        leaf_version: bitcoin::taproot::LeafVersion::TapScript,
+        output_key_parity: taproot_spend_info.output_key_parity(),
+        internal_key: taproot_spend_info.internal_key(),
+        merkle_branch: txp2_merkle_branch,
+    };
+
+    let _policy_commitment = txp2_control_block.verify_taproot_commitment(
+        &secp,
+        taproot_spend_info.output_key().to_inner(),
+        policy_2_data.get_script(),
+    );
+
+    // The signatures must be in order and reversed compared to what we have put on the policy
+    txp2_witness.push(txp2_party3_signature.to_vec());
+    // In place of the 2nd key we must put an empty element in witness
+    txp2_witness.push(Vec::new());
+    txp2_witness.push(txp2_party1_signature.to_vec());
+    txp2_witness.push(policy_2_data.get_script().as_bytes());
+    txp2_witness.push(txp2_control_block.serialize());
+
+    *txp2_sighasher.witness_mut(0).unwrap() = txp2_witness;
+
+    // Checking if txp2 is acceptable in mempool
+    let txp2 = txp2_sighasher.into_transaction();
+
+    let _txp2_acceptance = rusty_client.test_mempool_accept(&[&*txp2]).unwrap();
+
+    let _txp2_txid = send_and_mine(&txp2, &mining_client, &mining_address, 30);
+
+    println!(
+        "\nAfter txp2, Rusty has {} bitcoins.\n",
+        get_balance(&taproot_descriptor, &rusty_client)
+    );
+    // DONE!!!
+
+    // ----------------------------------------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------------------------------------
+
+    // We are now at block 250. Lets mine 50 so that we get to block 300, after which we can spend with policy 3.
+    mining_client
+        .generate_to_address(50, &mining_address)
+        .unwrap();
+
+    let rusty_scan_request = ScanTxOutRequest::Single(taproot_descriptor.to_string());
+    let rusty_scan_result = rusty_client
+        .scan_tx_out_set_blocking(&[rusty_scan_request])
+        .unwrap();
+    let txp3_input_utxo = rusty_scan_result.unspents[0].clone();
+
+    let txp3_version = Version::TWO;
+    let txp3_locktime =
+        LockTime::from_height(rusty_client.get_block_count().unwrap() as u32).unwrap();
+
+    let txp3_input_previous_output = OutPoint {
+        txid: txp3_input_utxo.txid,
+        vout: txp3_input_utxo.vout,
+    };
+    let txp3_input_sequence = Sequence::ZERO;
+
+    let txp3_input = TxIn {
+        previous_output: txp3_input_previous_output,
+        script_sig: ScriptBuf::default(),
+        sequence: txp3_input_sequence,
+        witness: Witness::default(),
+    };
+
+    let txp3_spend_output = TxOut {
+        value: Amount::from_int_btc(5),
+        script_pubkey: mining_address.script_pubkey(),
+    };
+
+    let txp3_change_output = TxOut {
+        value: Amount::from_btc(52.9985).unwrap(),
+        script_pubkey: rusty_taproot_address.script_pubkey(),
+    };
+
+    let mut txp3_unsigned = Transaction {
+        version: txp3_version,
+        lock_time: txp3_locktime,
+        input: vec![txp3_input],
+        output: vec![txp3_spend_output, txp3_change_output],
+    };
+
+    let mut txp3_sighasher = SighashCache::new(&mut txp3_unsigned);
+    let txp3_sighash_type = TapSighashType::Default;
+    let txp3_prevout = vec![TxOut {
+        value: txp3_input_utxo.amount,
+        script_pubkey: txp3_input_utxo.script_pub_key,
+    }];
+    let txp3_prevouts = Prevouts::All(&txp3_prevout);
+    let txp3_leaf_hash = TapLeafHash::from_script(
+        &policy_3_data.get_script().clone(),
+        bitcoin::taproot::LeafVersion::TapScript,
+    );
+    let txp3_sighash = txp3_sighasher
+        .taproot_script_spend_signature_hash(0, &txp3_prevouts, txp3_leaf_hash, txp3_sighash_type)
+        .unwrap();
+
+    let txp3_msg = Message::from_digest(txp3_sighash.to_byte_array());
+
+    let txp3_party2_signature = secp.sign_schnorr(&txp3_msg, keyset2.get_keypair());
+    let txp3_party2_signature = Signature {
+        sig: txp3_party2_signature,
+        hash_ty: txp3_sighash_type,
+    };
+
+    let txp3_policy3_merkle_branch = taproot_spend_info
+        .script_map()
+        .get(&(policy_3_data.get_script().clone(), LeafVersion::TapScript))
+        .unwrap()
+        .first()
+        .unwrap()
+        .clone();
+
+    let txp3_control_block = ControlBlock {
+        leaf_version: bitcoin::taproot::LeafVersion::TapScript,
+        output_key_parity: taproot_spend_info.output_key_parity(),
+        internal_key: taproot_spend_info.internal_key(),
+        merkle_branch: txp3_policy3_merkle_branch,
+    };
+
+    let mut txp3_witness = Witness::new();
+    txp3_witness.push(txp3_party2_signature.to_vec());
+    txp3_witness.push(policy_3_data.get_script().as_bytes());
+    txp3_witness.push(txp3_control_block.serialize());
+
+    *txp3_sighasher.witness_mut(0).unwrap() = txp3_witness;
+
+    let txp3 = txp3_sighasher.into_transaction();
+
+    let _txp3_acceptance = rusty_client.test_mempool_accept(&[&*txp3]).unwrap();
+
+    let _txp3_txid = send_and_mine(&txp3, &mining_client, &mining_address, 50);
+
+    println!(
+        "\nAfter txp3, Rusty has {} bitcoins.\n",
+        get_balance(&taproot_descriptor, &rusty_client)
+    );
+    // DONE!!!
+
+    // ----------------------------------------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------------------------------------
+
+
+
 
     unwind_regtest(vec![rusty_client, mining_client], TEMP_PATH);
     Ok(())
