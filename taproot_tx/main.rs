@@ -72,7 +72,7 @@ fn main() -> Result<(), TaprootUtilsError> {
     //  1- key_1 and key_2 and key_3 can always spend together (keypath spend).
     //  2- 2-of-3 from key_1,key_2 and key_3 can spend (scriptpath spend).
     //  3- After block 300, key_2 can spend alone (scriptpath spend).
-    //  4- After block 500, key_1 can spend alone if it provides a preimage to a sha256 digest (scriptpath spend).
+    //  4- After block 400, key_1 can spend alone if it provides a preimage to a sha256 digest (scriptpath spend).
 
     // First we need to create our TapTree
     // To do so, we create scripts for policies 2 to 4 as follows
@@ -96,9 +96,13 @@ fn main() -> Result<(), TaprootUtilsError> {
     let policy_4_hashlock_preimage = b"Hegel loves bitcoin and so on.";
     let mut hasher = sha2::Sha256::new();
     hasher.update(policy_4_hashlock_preimage);
+    let policy_4_hashlock_digest_preimage = hasher.finalize();
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(policy_4_hashlock_digest_preimage.clone());
     let policy_4_hashlock_digest = hex::encode(hasher.finalize());
+
     let policy_4_str = format!(
-        "and(sha256({}),and(pk({}),after(500)))",
+        "and(sha256({}),and(pk({}),after(400)))",
         policy_4_hashlock_digest,
         keyset1.get_publickey_x_only()
     );
@@ -650,8 +654,110 @@ fn main() -> Result<(), TaprootUtilsError> {
     // ----------------------------------------------------------------------------------------------------------
     // ----------------------------------------------------------------------------------------------------------
 
+    // We are now at block 350. Lets mine 50 so that we get to block 400, after which we can spend with policy 4.
+    mining_client
+        .generate_to_address(50, &mining_address)
+        .unwrap();
 
+    let rusty_scan_request = ScanTxOutRequest::Single(taproot_descriptor.to_string());
+    let rusty_scan_result = rusty_client
+        .scan_tx_out_set_blocking(&[rusty_scan_request])
+        .unwrap();
+    let txp4_input_utxo = rusty_scan_result.unspents[0].clone();
 
+    let txp4_version = Version::TWO;
+    let txp4_locktime =
+        LockTime::from_height(rusty_client.get_block_count().unwrap() as u32).unwrap();
+
+    let txp4_input_previous_output = OutPoint {
+        txid: txp4_input_utxo.txid,
+        vout: txp4_input_utxo.vout,
+    };
+    let txp4_input_sequence = Sequence::ZERO;
+
+    let txp4_input = TxIn {
+        previous_output: txp4_input_previous_output,
+        script_sig: ScriptBuf::default(),
+        sequence: txp4_input_sequence,
+        witness: Witness::default(),
+    };
+
+    let txp4_spend_output = TxOut {
+        value: Amount::from_int_btc(5),
+        script_pubkey: mining_address.script_pubkey(),
+    };
+
+    let txp4_change_output = TxOut {
+        value: Amount::from_btc(47.998).unwrap(),
+        script_pubkey: rusty_taproot_address.script_pubkey(),
+    };
+
+    let mut txp4_unsigned = Transaction {
+        version: txp4_version,
+        lock_time: txp4_locktime,
+        input: vec![txp4_input],
+        output: vec![txp4_spend_output, txp4_change_output],
+    };
+
+    let mut txp4_sighasher = SighashCache::new(&mut txp4_unsigned);
+    let txp4_sighash_type = TapSighashType::Default;
+    let txp4_prevout = vec![TxOut {
+        value: txp4_input_utxo.amount,
+        script_pubkey: txp4_input_utxo.script_pub_key,
+    }];
+    let txp4_prevouts = Prevouts::All(&txp4_prevout);
+    let txp4_leaf_hash = TapLeafHash::from_script(
+        &policy_4_data.get_script().clone(),
+        bitcoin::taproot::LeafVersion::TapScript,
+    );
+    let txp4_sighash = txp4_sighasher
+        .taproot_script_spend_signature_hash(0, &txp4_prevouts, txp4_leaf_hash, txp4_sighash_type)
+        .unwrap();
+
+    let txp4_msg = Message::from_digest(txp4_sighash.to_byte_array());
+
+    let txp4_party1_signature = secp.sign_schnorr(&txp4_msg, keyset1.get_keypair());
+    let txp4_party1_signature = Signature {
+        sig: txp4_party1_signature,
+        hash_ty: txp4_sighash_type,
+    };
+
+    let txp4_policy4_merkle_branch = taproot_spend_info
+        .script_map()
+        .get(&(policy_4_data.get_script().clone(), LeafVersion::TapScript))
+        .unwrap()
+        .first()
+        .unwrap()
+        .clone();
+
+    let txp4_control_block = ControlBlock {
+        leaf_version: bitcoin::taproot::LeafVersion::TapScript,
+        output_key_parity: taproot_spend_info.output_key_parity(),
+        internal_key: taproot_spend_info.internal_key(),
+        merkle_branch: txp4_policy4_merkle_branch,
+    };
+
+    let mut txp4_witness = Witness::new();
+
+    txp4_witness.push(txp4_party1_signature.to_vec());
+    txp4_witness.push(policy_4_hashlock_digest_preimage.clone());
+    txp4_witness.push(policy_4_data.get_script().as_bytes());
+    txp4_witness.push(txp4_control_block.serialize());
+
+    *txp4_sighasher.witness_mut(0).unwrap() = txp4_witness;
+
+    let txp4 = txp4_sighasher.into_transaction();
+
+    let _txp4_acceptance = rusty_client.test_mempool_accept(&[&*txp4]).unwrap();
+    
+    let _txp4_txid = send_and_mine(&txp4, &mining_client, &mining_address, 50);
+
+    println!(
+        "\nAfter txp4, Rusty has {} bitcoins.\n",
+        get_balance(&taproot_descriptor, &rusty_client)
+    );
+
+    println!("\nAnd DONE!!!\nAll 4 policies are spent! Congrats!\n");
 
     unwind_regtest(vec![rusty_client, mining_client], TEMP_PATH);
     Ok(())
