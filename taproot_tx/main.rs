@@ -80,8 +80,6 @@ fn main() -> Result<(), TaprootUtilsError> {
     // Policy 2:
     let policy_2_str = format!(
         "thresh(2,pk({}),pk({}),pk({}))",
-        //"or(pk({}),pk({}))",
-        //"pk({})",
         keyset1.get_publickey_x_only(),
         keyset2.get_publickey_x_only(),
         keyset3.get_publickey_x_only()
