@@ -20,7 +20,7 @@ To run:
  ```
  cargo run --bin p2wpkh_tx
  ```
- 3- To ran the Taproot tutorial, enter the following command in repo's root directory via the terminal:
+ 3- To run the Taproot tutorial, enter the following command in repo's root directory via the terminal:
  ```
  cargo run --bin taproot_tx
  ```
