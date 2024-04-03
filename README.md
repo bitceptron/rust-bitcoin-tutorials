@@ -17,10 +17,12 @@ To run:
         const TEMP_PATH: &str = "Your path to a temp folder here.";
 
 2 - To run the Segwit P2WPKH tutorial, enter the following command in repo's root directory via the terminal:
+
     ```
     cargo run --bin p2wpkh_tx
     ```
 3 - To run the Taproot tutorial, enter the following command in repo's root directory via the terminal:
+
     ```
     cargo run --bin taproot_tx
     ```
