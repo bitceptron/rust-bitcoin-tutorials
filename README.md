@@ -4,7 +4,7 @@ A few bitcoin tutorials about subjects a bit hard to gather from scattered sourc
 
 To run:
 
- 0- You need a working Rust installation on your system. to do that, head to https://www.rust-lang.org/tools/install
+ 0- You need a working Rust installation on your system. To do that, head to https://www.rust-lang.org/tools/install
 
  1- Change the following constants in pertinent bins e.g. taproot_tx/main.rs:
 
