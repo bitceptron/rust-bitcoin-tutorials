@@ -4,25 +4,25 @@ A few bitcoin tutorials about subjects a bit hard to gather from scattered sourc
 
 To run:
 
-    0 - You need a working Rust installation on your system. To do that, head to https://www.rust-lang.org/tools/install
+0 - You need a working Rust installation on your system. To do that, head to https://www.rust-lang.org/tools/install
 
-    1 - Change the following constants in pertinent bins e.g. taproot_tx/main.rs:
+1 - Change the following constants in pertinent bins e.g. taproot_tx/main.rs:
 
-            // -->> SET THESE FIRST! <<--
+        // -->> SET THESE FIRST! <<--
 
-            const BITCOIND_PATH: &str = "Your path to bitcoind here. Include the file in the path.";
+        const BITCOIND_PATH: &str = "Your path to bitcoind here. Include the file in the path.";
 
-            const BITCOIN_CONF_PATH: &str = "Your path to bitcoin.conf here. Include the file in the path.";
+        const BITCOIN_CONF_PATH: &str = "Your path to bitcoin.conf here. Include the file in the path.";
 
-            const TEMP_PATH: &str = "Your path to a temp folder here.";
+        const TEMP_PATH: &str = "Your path to a temp folder here.";
 
-    2 - To run the Segwit P2WPKH tutorial, enter the following command in repo's root directory via the terminal:
-        ```
-        cargo run --bin p2wpkh_tx
-        ```
-    3 - To run the Taproot tutorial, enter the following command in repo's root directory via the terminal:
-        ```
-        cargo run --bin taproot_tx
-        ```
+2 - To run the Segwit P2WPKH tutorial, enter the following command in repo's root directory via the terminal:
+    ```
+    cargo run --bin p2wpkh_tx
+    ```
+3 - To run the Taproot tutorial, enter the following command in repo's root directory via the terminal:
+    ```
+    cargo run --bin taproot_tx
+    ```
 
  Happy Rusting plebs.
